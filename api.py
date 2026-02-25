@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile,File,HTTPException,Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -8,9 +8,9 @@ from datetime import datetime
 from ingestion import ingest_pdf
 from rag import generate_answer
 from typing import Dict, List, Tuple, Any,Optional
-from auth import verify_token, create_user,load_users,hash_password
-from rate_limiter import check_rate_limit
 import time
+import json
+import asyncio
 
 app_start_time = datetime.now()
 total_queries = 0
@@ -48,7 +48,7 @@ app.add_middleware(
 chat_sessions={}
 
 @app.get('/metrics')
-def get_metrics(username: str = Depends(verify_token)):
+def get_metrics():
     """System performance metrics"""
     uptime = datetime.now() - app_start_time
     
@@ -103,32 +103,6 @@ class RegisterRequest(BaseModel):
     password:str
 
 
-@app.post("/auth/register")
-def register(request:RegisterRequest):
-    """"Register a new User"""
-    result = create_user(request.username,request.password)
-    return{
-        "messsage":"user created successfully!",
-        "username":result["username"],
-        "token":result["token"]
-    }
-
-@app.post("/login")
-def login(request:RegisterRequest):
-    users=load_users()
-
-    if request.username not in users:
-        raise HTTPException(status_code=401,detail="Invalid Credentials")
-    
-    if users[request.username]["password"]!= hash_password(request.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    return{
-        "Token": users[request.username]["token"],
-        "username": request.username
-    }
-
-
 @app.post('/ingest')
 async def ingest_document(file:UploadFile=File(...),
     # username: str = Depends(verify_token) 
@@ -180,10 +154,8 @@ async def ingest_document(file:UploadFile=File(...),
         
         
 
-@app.post('/query',response_model=QueryResponse)
-async def query_documents(request:QueryRequest,
-    # username: str = Depends(verify_token)
-    ):
+@app.post('/query')
+async def query_documents(request:QueryRequest):
     username="default"
     try:
         session_id = request.session_id or str(uuid.uuid4())
@@ -193,20 +165,17 @@ async def query_documents(request:QueryRequest,
         
         chat_history = chat_sessions[session_id]
 
+        answer, sources, raw_contexts = generate_answer(request.query, chat_history)
 
-        answer,sources = generate_answer(request.query,chat_history)
-
-        chat_sessions[session_id].append((request.query,answer))
-
+        # chat_sessions will store: (user_query, assistant_answer)
+        chat_sessions[session_id].append((request.query, answer))
         if len(chat_sessions[session_id]) > 10:
             chat_sessions[session_id] = chat_sessions[session_id][-10:]
-        
-
+            
         return {
             "query": request.query,
             "answer": answer,
-            "session_id":session_id,
-            # "sources":sources
+            "session_id":session_id
         }
     except Exception as e:
         print(f"❌ Query failed: {str(e)}")
@@ -214,71 +183,5 @@ async def query_documents(request:QueryRequest,
             status_code=500,
             detail=f"Query processing failed: {str(e)}"
         )
-@app.get('/debug/sessions/{session_id}', response_model=SessionDebugResponse)
-def get_session_history(session_id: str):
-    """
-    Get conversation history for a specific session
-    
-    **Usage:** GET /debug/sessions/YOUR_SESSION_ID
-    
-    Example: GET /debug/sessions/1234567890
-    """
-    print(f"🔍 Looking for session: {session_id}")
-    print(f"📊 Available sessions: {list(chat_sessions.keys())}")
-    
-    if session_id not in chat_sessions:
-        print(f"❌ Session {session_id} not found")
-        return {
-            "session_id": session_id,
-            "exists": False,
-            "message_count": 0,
-            "conversation": []
-        }
-    
-    history = chat_sessions[session_id]
-    print(f"✅ Found session with {len(history)} messages")
-    
-    return {
-        "session_id": session_id,
-        "exists": True,
-        "message_count": len(history),
-        "conversation": [
-            {
-                "turn": i + 1,
-                "user_message": user_msg,
-                "assistant_response": ai_msg
-            }
-            for i, (user_msg, ai_msg) in enumerate(history)
-        ]
-    }
 
-
-@app.get('/debug/all-sessions')
-def list_all_sessions():
-    """
-    List all active sessions (for debugging)
-    
-    **Usage:** GET /debug/all-sessions
-    """
-    if not chat_sessions:
-        return {
-            "total_sessions": 0,
-            "message": "No active sessions",
-            "sessions": []
-        }
-    
-    sessions = []
-    for session_id, history in chat_sessions.items():
-        last_turn = history[-1] if history else (None, None)
-        
-        sessions.append({
-            "session_id": session_id,
-            "message_count": len(history),
-            "last_query": last_turn[0] if last_turn[0] else None,
-            "last_response": (last_turn[1][:100] + "...") if last_turn[1] and len(last_turn[1]) > 100 else last_turn[1]
-        })
-    
-    return {
-        "total_sessions": len(chat_sessions),
-        "sessions": sessions
-    }
+# Removed get_session_metrics endpoint

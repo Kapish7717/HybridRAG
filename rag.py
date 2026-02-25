@@ -1,7 +1,5 @@
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings
-# from langchain_community.llms.ollama import Ollama
-from langchain_ollama import OllamaLLM
+from langchain_groq import ChatGroq
 from langchain_core.documents import Document
 import os
 from embed import get_embeddings
@@ -9,13 +7,15 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.messages import HumanMessage, AIMessage 
 from sentence_transformers import CrossEncoder
 from hallucination_check import check_hallucination
+from dotenv import load_dotenv
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") 
+load_dotenv()
+
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text:latest")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama3")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
 TOP_K = int(os.getenv("TOP_K", "5"))
-CROSS_ENCODER = os.getenv("CROSS_ENCODER","cross-encoder/ms-marco-MiniLM-L-6-v2")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+CROSS_ENCODER = os.getenv("CROSS_ENCODER","cross-encoder/ms-marco-TinyBERT-L-2-v2")
 
 
 
@@ -148,7 +148,7 @@ def generate_answer(query:str,chat_history=None):
     if chat_history is None:
         chat_history = []
     print("🔍 Retrieving context...")
-    context,results = retrieve_context(query)
+    context, results = retrieve_context(query)
 
     history_text =  format_chat_history(chat_history)
 
@@ -183,13 +183,34 @@ ANSWER:
         #     ],
         # )
 
-        # return response['message']['content']
-    model = OllamaLLM(model = LLM_MODEL)
-    response_text = model.invoke(prompt)
-    sources = [doc.metadata.get("id", None) for doc, _score in results]
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY is not set in environment or .env file!")
+        
+    model = ChatGroq(model_name=LLM_MODEL, groq_api_key=GROQ_API_KEY, temperature=0.1)
+    
+    # Langchain Chat Models need a slightly different stream processing for Document/Role metadata compared to raw LLMs occasionally
+    response = model.invoke(prompt)
+    response_text = response.content if hasattr(response, 'content') else str(response)
+            
+    # Safely unpack results which might be Document objects directly or tuples of (Document, score)
+    sources_raw = []
+    raw_contexts = []
+    
+    for item in results:
+        if isinstance(item, tuple) and len(item) == 2:
+            doc, score = item
+        elif isinstance(item, Document):
+            doc = item
+            score = 1.0 # default score
+        else:
+            continue
+            
+        sources_raw.append((doc, score))
+        raw_contexts.append(doc.page_content)
+
     # formatted_response = f"Response: {response_text}\nSources: {sources}"
     sources=[]
-    for doc,score in results:
+    for doc,score in sources_raw:
         chunk_id = doc.metadata.get("id", "unknown")
         
         # Parse chunk_id: "uploads/doc.pdf:5:2" -> page 5
@@ -211,24 +232,9 @@ ANSWER:
     
     # print(f"Sources type = {type(sources)}")
     # print(formatted_response)
-    print("🛡 Checking hallucination with HHLM...")
-
-    is_hallucinated, detailed = check_hallucination(context, response_text)
-
-    for sentence, score in detailed:
-        print(f"\nScore: {score:.3f}")
-        print(sentence)
-
-    if is_hallucinated:
-        print("\n⚠️ Hallucinated Sentences:")
-        for sentence, score in is_hallucinated:
-            print(f"[{score:.3f}] {sentence}")
-    else:
-        print("✅ Answer is grounded.")
-
-    # chat_history.append((query,response_text))
-    # print(chat_history[-1])
-    return response_text,sources
+    # Since we are returning a stream, we can't synchronously check hallucination here easily. 
+    # We will defer hallucination and Ragas checks to the background task in api.py.
+    return response_text, sources, raw_contexts
 # if __name__ =='__main__':
 #      query = "what is this document about?"
 #      retrieve_context(query,True)

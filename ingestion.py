@@ -1,7 +1,6 @@
 from langchain_community.document_loaders import PyPDFLoader 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
 from embed import get_embeddings
 import os
@@ -12,7 +11,7 @@ import uuid
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")  
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text:latest")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama3")
+LLM_MODEL = os.getenv("LLM_MODEL", "phi3:mini")
 TOP_K = int(os.getenv("TOP_K", "4"))
 
 def ingest_pdf(pdf_path:str,username: str = "default"):
@@ -34,7 +33,7 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
     document_loader = PyPDFLoader(pdf_path)
     documents = document_loader.load()
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 800,
+        chunk_size = 500,
         chunk_overlap = 80,
         length_function=len,
         is_separator_regex=False
