@@ -123,9 +123,10 @@ def format_chat_history(chat_history):
         return "No previous conversation."
     
     formatted = []
-    for user_msg, ai_msg in chat_history:
-        formatted.append(f"User: {user_msg}")
-        formatted.append(f"Assistant: {ai_msg}")
+    for turn in chat_history:
+        if len(turn) >= 2:
+            formatted.append(f"User: {turn[0]}")
+            formatted.append(f"Assistant: {turn[1]}")
     
     return "\n".join(formatted)
 
