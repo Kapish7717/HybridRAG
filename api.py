@@ -4,9 +4,10 @@ from pydantic import BaseModel
 import os
 import shutil
 import uuid
+import tempfile
 from datetime import datetime
 from ingestion import ingest_pdf
-from rag import generate_answer
+from rag import generate_answer, refresh_bm25
 from typing import Dict, List, Tuple, Any,Optional
 import time
 import json
@@ -104,7 +105,7 @@ class RegisterRequest(BaseModel):
 
 
 @app.post('/ingest')
-async def ingest_document(file:UploadFile=File(...),
+def ingest_document(file:UploadFile=File(...),
     # username: str = Depends(verify_token) 
     ):
     # print(f"👤 User {username} is uploading {file.filename}")
@@ -115,16 +116,19 @@ async def ingest_document(file:UploadFile=File(...),
     #     )
     username="default"
     try:
-        os.makedirs('uploads',exist_ok=True)
-        unique_filename= f"{uuid.uuid4()}_{file.filename}"
-        file_path=f"uploads/{unique_filename}"
-        with open( file_path,'wb') as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # Create a temporary file instead of saving to uploads folder
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            temp_file_path = tmp.name
 
-        result =ingest_pdf(file_path)
+        result = ingest_pdf(temp_file_path)
+        
+        # Refresh the BM25 index now that new documents are in the DB
+        refresh_bm25()
+        
         try:
-            os.remove(file_path)
-            print(f"🗑️ Cleaned up: {file_path}")
+            os.remove(temp_file_path)
+            print(f"🗑️ Cleaned up temp file: {temp_file_path}")
         except Exception as e:
             print(f"⚠️ Could not delete temp file: {e}")
         
@@ -155,7 +159,7 @@ async def ingest_document(file:UploadFile=File(...),
         
 
 @app.post('/query')
-async def query_documents(request:QueryRequest):
+def query_documents(request:QueryRequest):
     username="default"
     try:
         session_id = request.session_id or str(uuid.uuid4())

@@ -5,7 +5,7 @@ import os
 from embed import get_embeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.messages import HumanMessage, AIMessage 
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder,SentenceTransformer,util
 from hallucination_check import check_hallucination
 from dotenv import load_dotenv
 
@@ -17,50 +17,97 @@ TOP_K = int(os.getenv("TOP_K", "5"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 CROSS_ENCODER = os.getenv("CROSS_ENCODER","cross-encoder/ms-marco-TinyBERT-L-2-v2")
 
+# Global singletons
+_vector_db = None
+_bm25_retriever = None
+_reranker = None
+
+def get_vectordb():
+    global _vector_db
+    if _vector_db is None:
+        try:
+            _vector_db = Chroma(
+                persist_directory=CHROMA_PATH,
+                embedding_function=get_embeddings()
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to load Chroma DB: {e}")
+            _vector_db = None
+    return _vector_db
+
+def get_bm25_retriever():
+    global _bm25_retriever
+    if _bm25_retriever is None:
+        refresh_bm25()
+    return _bm25_retriever
+
+def refresh_bm25():
+    """Refreshes the global BM25 retriever index from Chroma DB"""
+    global _bm25_retriever
+    print("🔄 Refreshing BM25 index in memory...")
+    try:
+        db = get_vectordb()
+        if not db:
+            return None
+        
+        all_data = db.get()
+        if not all_data or not all_data.get("documents"):
+            print("⚠️ Chroma DB is empty, BM25 index cleared.")
+            _bm25_retriever = None
+            return None
+            
+        all_docs = [
+             Document(page_content=text,metadata=meta)
+             for text, meta in zip(all_data["documents"],all_data["metadatas"])
+             if text and text.strip()
+        ]
+        
+        if not all_docs:
+            print("⚠️ Chroma DB has no valid text documents.")
+            _bm25_retriever = None
+            return None
+            
+        _bm25_retriever = BM25Retriever.from_documents(all_docs,k=TOP_K)
+        print(f"✅ BM25 index refreshed with {len(all_docs)} documents.")
+        return _bm25_retriever
+    except Exception as e:
+        print(f"❌ Failed to refresh BM25 index: {e}")
+        return None
+
+def get_reranker():
+    global _reranker
+    if _reranker is None:
+        print(f"📦 Loading CrossEncoder model: {CROSS_ENCODER}...")
+        _reranker = CrossEncoder(CROSS_ENCODER)
+    return _reranker
 
 
-     
-
-# def get_vectordb():
-#     global _vector_db
-#     if _vector_db is None:
-#         embeddings = OllamaEmbeddings(model=EMBED_MODEL,base_url=OLLAMA_BASE_URL)
-#         _vector_db = Chroma(
-#             persist_directory=CHROMA_PATH,
-#             embedding_function=embeddings
-#             )
-#     return _vector_db
 def retrieve_context(query: str,use_hybrid=True):
     print("🔥 File loaded")
 
     """Retrieve top-k relevant chunks from Chroma"""
-    try:  # ✅ ADD TRY BLOCK
-        db = Chroma(
-             persist_directory=CHROMA_PATH,embedding_function=get_embeddings()
-        )
+    try:
+        db = get_vectordb()
+        if not db:
+            return "Error: Database not initialized", []
+            
         if not use_hybrid:
             # Vector search only
             results = db.similarity_search_with_score(query, k=TOP_K)
             context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
             print("only vector search occured")
             return context_text, results
+            
         vector_results = db.similarity_search_with_score(query, k=TOP_K)
         vector_docs = [doc for doc, score in vector_results]
-        # print(len(vector_docs))
 
-        all_data = db.get()
-
-        if not all_data or not all_data.get("documents"):
-            print("⚠️ Chroma DB is empty, using vector search only")
+        bm25_retriever = get_bm25_retriever()
+        
+        if not bm25_retriever:
+            print("⚠️ BM25 retriever not available, using vector search only")
             context_text = "\n\n---\n\n".join([doc.page_content for doc in vector_docs])
             return context_text, vector_results
-        
-        all_docs = [
-             Document(page_content=text,metadata=meta)
-             for text, meta in zip(all_data["documents"],all_data["metadatas"])
-        ]
 
-        bm25_retriever = BM25Retriever.from_documents(all_docs,k=TOP_K)
         bm25_docs = bm25_retriever.invoke(query)
 
         combined_docs = vector_docs + bm25_docs
@@ -77,7 +124,7 @@ def retrieve_context(query: str,use_hybrid=True):
 
         unique_docs = unique_docs[:TOP_K]
 
-        reranker = CrossEncoder(CROSS_ENCODER)
+        reranker = get_reranker()
         print(f"🎯 Reranking to top {TOP_K}...")
         pairs = [(query, doc.page_content) for doc in unique_docs]
         scores = reranker.predict(pairs)
@@ -99,10 +146,6 @@ def retrieve_context(query: str,use_hybrid=True):
         for i, doc in enumerate(reranked_results)
         ])
         
-        # 7. Create results in same format as vector search
-        # results = [(doc, 1.0) for doc in unique_docs]  # Dummy scores after hybrid
-        # print(f"Context text type: {type(context_text)}\n Results type: {type(results)}")
-        # print(results[0])
         return context_text, scored_docs
     
     except Exception as e:  
@@ -230,12 +273,5 @@ ANSWER:
             "page": source_info,
             "score": float(score)
         })
-    
-    # print(f"Sources type = {type(sources)}")
-    # print(formatted_response)
-    # Since we are returning a stream, we can't synchronously check hallucination here easily. 
-    # We will defer hallucination and Ragas checks to the background task in api.py.
+
     return response_text, sources, raw_contexts
-# if __name__ =='__main__':
-#      query = "what is this document about?"
-#      retrieve_context(query,True)

@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.env
+
+# Do not ignore chroma here because we might want to mount it, 
+# but we don't want to copy it into the image during build
+chroma/

@@ -1,5 +1,5 @@
 from langchain_community.document_loaders import PyPDFLoader 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from embed import get_embeddings
@@ -10,9 +10,11 @@ import uuid
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")  
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text:latest")
 LLM_MODEL = os.getenv("LLM_MODEL", "phi3:mini")
 TOP_K = int(os.getenv("TOP_K", "4"))
+
+
+
 
 def ingest_pdf(pdf_path:str,username: str = "default"):
     # Generate unique document ID
@@ -20,31 +22,36 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
     filename = os.path.basename(pdf_path)
     
     print(f"📄 Processing: {filename} (doc_id: {doc_id})")
-    # ✅ ADD THESE 3 LINES - Clear old database
-    if os.path.exists(CHROMA_PATH):
-        try:
-            shutil.rmtree(CHROMA_PATH)
-            print("🗑️ Cleared old database")
-        except PermissionError as e:
-            print(f"⚠️ Could not clear old database (likely in use by another process): {e}")
-            print("Proceeding with existing database (chunks will be added/updated as needed).")
-    
-    # Rest of your code stays the same
-    document_loader = PyPDFLoader(pdf_path)
-    documents = document_loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 500,
-        chunk_overlap = 80,
-        length_function=len,
-        is_separator_regex=False
-    )
-
-    chunks = text_splitter.split_documents(documents)
-
+    # Instead of deleting the folder (which fails in Docker if it's a mounted volume),
+    # we initialize the DB and delete all records via the API if we want to clear it.
     db = Chroma(
         persist_directory=CHROMA_PATH,
         embedding_function=get_embeddings()
     )
+    
+    try:
+        existing_items = db.get(include=[])
+        existing_ids = existing_items.get("ids", [])
+        if existing_ids:
+            print(f"🗑️ Clearing {len(existing_ids)} old documents from database...")
+            # We must pass the list of IDs directly, deleting empty lists fails in some Chroma versions.
+            db.delete(ids=existing_ids)
+            print("✅ Database cleared.")
+    except Exception as e:
+        print(f"⚠️ Could not clear old database records: {e}")
+        print("Proceeding with existing database (chunks will be added/updated as needed).")
+    
+    # Rest of your code stays the same
+    document_loader = PyPDFLoader(pdf_path)
+    documents = document_loader.load()
+    text_splitter = SemanticChunker(
+        get_embeddings(), breakpoint_threshold_type="percentile"
+    )
+
+    chunks = text_splitter.split_documents(documents)
+    chunks = [chunk for chunk in chunks if chunk.page_content.strip()]
+
+
 
     chunks_with_ids = calculate_chunk_ids(chunks)
 
