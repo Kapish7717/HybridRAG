@@ -1,5 +1,5 @@
 from langchain_community.document_loaders import PyPDFLoader 
-from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from embed import get_embeddings
@@ -7,6 +7,7 @@ import os
 import shutil  # ✅ ADD THIS
 from datetime import datetime
 import uuid
+import time
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")  
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
@@ -44,8 +45,9 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
     # Rest of your code stays the same
     document_loader = PyPDFLoader(pdf_path)
     documents = document_loader.load()
-    text_splitter = SemanticChunker(
-        get_embeddings(), breakpoint_threshold_type="percentile"
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
     )
 
     chunks = text_splitter.split_documents(documents)
@@ -67,7 +69,18 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
     if len(new_chunks):
         print(f"👉 Adding new documents: {len(new_chunks)}")
         new_chunk_ids = [chunk.metadata["id"] for chunk in new_chunks]
-        db.add_documents(new_chunks, ids=new_chunk_ids)
+        
+        # Batch insertions and sleep to avoid Gemini 100 req/min rate limit
+        batch_size = 50
+        for i in range(0, len(new_chunks), batch_size):
+            batch = new_chunks[i:i + batch_size]
+            batch_ids = new_chunk_ids[i:i + batch_size]
+            print(f"Inserting batch {i//batch_size + 1}/{(len(new_chunks) + batch_size - 1)//batch_size}...")
+            db.add_documents(batch, ids=batch_ids)
+            if i + batch_size < len(new_chunks):
+                print("Sleeping for 10 seconds to respect API rate limits...")
+                time.sleep(10)
+        
         print("✅ Successfully added to database")
     else:
         print("✅ No new documents to add")
