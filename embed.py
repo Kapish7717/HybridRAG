@@ -1,10 +1,10 @@
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "models/embedding-001")
 
 def get_embeddings():
-    return HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+    return GoogleGenerativeAIEmbeddings(model=EMBED_MODEL)
