@@ -16,9 +16,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY api.py .
 COPY ingestion.py .
-    COPY rag.py .
-    COPY embed.py .
-    COPY hallucination_check.py .
+COPY rag.py .
+COPY embed.py .
+COPY hallucination_check.py .
+COPY text_to_sql.py .
 
 # Expose port
 EXPOSE 8000

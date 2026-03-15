@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -8,10 +8,12 @@ import tempfile
 from datetime import datetime
 from ingestion import ingest_pdf
 from rag import generate_answer, refresh_bm25
-from typing import Dict, List, Tuple, Any,Optional
+from typing import Dict, List, Tuple, Any, Optional
 import time
 import json
 import asyncio
+import sqlite3
+from text_to_sql import rank_tables,make_sql_prompt,extract_schema,generate_sql_query,sql_response,rag_response
 
 app_start_time = datetime.now()
 total_queries = 0
@@ -46,7 +48,8 @@ app.add_middleware(
 
 #     print("✅ Startup complete! System is warm and ready.")
 
-chat_sessions={}
+chat_sessions = {}
+current_db_path: Optional[str] = None  # Tracks the currently active database file path
 
 @app.get('/metrics')
 def get_metrics():
@@ -102,6 +105,19 @@ class SessionDebugResponse(BaseModel):
 class RegisterRequest(BaseModel):
     username:str
     password:str
+
+class SQLQueryRequest(BaseModel):
+    query:str
+    filename:str
+    session_id:Optional[str]=None
+
+class SQLQueryResponse(BaseModel):
+    query: str
+    generated_sql: str
+    results: List[Dict[str, Any]]
+    answer: str
+    session_id: str
+    error: Optional[str] = None
 
 
 @app.post('/ingest')
@@ -189,3 +205,91 @@ def query_documents(request:QueryRequest):
         )
 
 # Removed get_session_metrics endpoint
+
+@app.post('/upload-db')
+async def upload_db(file:UploadFile=File(...)):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    file_location = f"{UPLOAD_DIR}/{file.filename}"
+    with open(file_location, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {
+        "message": "Database uploaded successfully!",
+        "filename": file.filename
+    }    
+
+    
+
+
+@app.post('/sql_query')
+async def sql_query(
+    query: str = Form(...),
+    file: Optional[UploadFile] = File(None)
+):
+    global current_db_path
+    
+    try:
+        if file:
+            # If a new file is uploaded, clean up the old one
+            if current_db_path and os.path.exists(current_db_path):
+                try:
+                    os.remove(current_db_path)
+                except Exception:
+                    pass
+                    
+            # Save the new file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+                shutil.copyfileobj(file.file, tmp)
+                current_db_path = tmp.name
+        else:
+            # If no file is uploaded, try to use the existing one
+            if not (current_db_path and os.path.exists(current_db_path)):
+                raise HTTPException(status_code=400, detail="No database file uploaded and no active database found. Please upload a database file.")
+
+        try:
+            table_specs = extract_schema(current_db_path)
+        except sqlite3.OperationalError:
+            if file:
+                os.remove(current_db_path)
+                current_db_path = None
+            raise HTTPException(status_code=400, detail="Invalid SQLite database.")
+
+        if not table_specs:
+            if file:
+                os.remove(current_db_path)
+                current_db_path = None
+            raise HTTPException(status_code=400, detail="No SQL tables found in the provided database.")
+
+        rerank_table = rank_tables(query, table_specs)
+        sql_prompt = make_sql_prompt(query, rerank_table)
+        generated_sql = generate_sql_query(sql_prompt)
+
+        try:
+            sql_result = sql_response(generated_sql, current_db_path)
+            natural_language_answer = rag_response(query, generated_sql, sql_result)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"SQL Execution Error: {str(e)}")
+
+        return {
+            "query": query,
+            "generated_sql": generated_sql,
+            "sql_result": sql_result,
+            "answer": natural_language_answer
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post('/clear_db')
+async def clear_db():
+    """Deletes the currently active database."""
+    global current_db_path
+    if current_db_path and os.path.exists(current_db_path):
+        try:
+            os.remove(current_db_path)
+        except Exception as e:
+            print(f"Failed to delete DB: {e}")
+        current_db_path = None
+        return {"message": "Database cleared."}
+    return {"message": "No active database found."}
