@@ -71,6 +71,7 @@ def get_metrics():
         }
     }
 
+@app.head('/')
 @app.get('/')
 def health_check():
     return{
