@@ -23,7 +23,8 @@ This document explains the step-by-step workflow of the newly integrated **Text-
 - **Backend Process:**
   - Standard databases can have dozens or hundreds of tables, which would easily overwhelm an LLM's context window.
   - The system pairs the user's query with every single table schema extracted in Step 2.
-  - Using a Cross-Encoder (`jinaai/jina-reranker-v2-base-multilingual`), the system mathematically scores how statistically relevant each table is to the user's question.
+  - The backend makes a lightweight HTTP POST request to the **Jina AI Reranker API** (`jina-reranker-v2-base-multilingual`).
+  - Jina's servers mathematically score how statistically relevant each table is to the user's question, preserving precious server RAM.
   - The tables are ranked, and only the mathematically **Top 3 most relevant tables** are sent forward.
 
 ## 4. SQL Generation
