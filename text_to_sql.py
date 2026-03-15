@@ -1,7 +1,6 @@
-from transformers import AutoModelForSequenceClassification
 import os
 import json
-import torch
+import requests
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
@@ -9,24 +8,9 @@ import sqlite3
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-RERANK_MODEL = os.getenv("RERANK_MODEL", "jinaai/jina-reranker-v2-base-multilingual")
+JINA_API_KEY = os.getenv("JINA_API_KEY", "")
 
-
-model=None
 llm=None
-def rerank_model():
-    global model
-    if not model:
-        model = AutoModelForSequenceClassification.from_pretrained(
-            RERANK_MODEL,
-            torch_dtype="auto",
-            trust_remote_code=True
-        )
-    if torch.cuda.is_available():
-        model.to("cuda")
-    else:
-        model.to("cpu")
-    return model 
 
 def chat_model():
     global llm
@@ -54,20 +38,59 @@ def extract_schema(filename:str)->list[str]:
 
 def rank_tables(query:str,table_specs:list[str],top_n:int=0)->list[tuple[float,str]]:
     """
-    Get sorted pairs of scores and table specifications, then return the top N,
-    or all if top_n is 0 or default.
+    Get sorted pairs of scores and table specifications using the Jina AI API, 
+    then return the top N, or all if top_n is 0 or default.
     """
     if not table_specs:
         return []
 
-    pairs = [[query, table_spec] for table_spec in table_specs]
-    rr_model = rerank_model()
-    scores = rr_model.compute_score(pairs)
-    scored_tables = [(score, table_spec) for score, table_spec in zip(scores, table_specs)]
-    scored_tables.sort(key=lambda x: x[0], reverse=True)
-    if top_n and top_n < len(scored_tables):
-        return scored_tables[0:top_n]
-    return scored_tables
+    if not JINA_API_KEY:
+        raise ValueError("JINA_API_KEY is missing from environment variables")
+
+    url = 'https://api.jina.ai/v1/rerank'
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {JINA_API_KEY}'
+    }
+    data = {
+        "model": "jina-reranker-v2-base-multilingual",
+        "query": query,
+        "documents": table_specs,
+        "top_n": top_n if top_n > 0 else len(table_specs)
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        # Jina returns a list of dictionaries in 'results'
+        # Example: [{"index": 2, "document": {"text": "..."}, "relevance_score": 0.98}, ...]
+        scored_tables = []
+        for item in result.get("results", []):
+            score = item.get("relevance_score", 0.0)
+            
+            # The API returns the exact string we sent in 'documents'
+            doc_data = item.get("document", "")
+            if isinstance(doc_data, dict):
+                table_spec = doc_data.get("text", "")
+            else:
+                table_spec = doc_data
+                
+            if not table_spec:
+                # Fallback if the API only returns the original index
+                original_index = item.get("index")
+                table_spec = table_specs[original_index]
+            
+            scored_tables.append((score, table_spec))
+            
+        return scored_tables
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error calling Jina API: {e}")
+        # Return unranked tables as a fallback or raise exception
+        return [(0.0, spec) for spec in table_specs]
     
 def make_sql_prompt(query:str,table_specs:list[tuple[float,str]])->str:
     make_sql_prompt_tmpl_text = (
