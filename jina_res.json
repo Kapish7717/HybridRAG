@@ -1,0 +1,19 @@
+{
+  "model": "jina-reranker-v2-base-multilingual",
+  "object": "list",
+  "usage": {
+    "total_tokens": 48
+  },
+  "results": [
+    {
+      "index": 0,
+      "relevance_score": 0.02675928,
+      "document": "CREATE TABLE A (id INT);"
+    },
+    {
+      "index": 1,
+      "relevance_score": 0.02368947,
+      "document": "CREATE TABLE B (id INT);"
+    }
+  ]
+}

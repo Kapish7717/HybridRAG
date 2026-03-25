@@ -37,7 +37,7 @@ This document explains the step-by-step workflow of the newly integrated **Text-
 - **Action:** The generated SQL is executed securely against the user's active temporary database.
 - **Backend Process:**
   - The server cleans the LLM response of any markdown backticks.
-  - It opens a connection to `current_db_path` and executes the query through a standard cursor.
+  - It opens a connection to `current_db_path` and executes the query through a standard cursor. 
   - The raw database response (usually a list of tuples) is captured via `.fetchall()`.
 
 ## 6. Conversational Response Generation (RAG)

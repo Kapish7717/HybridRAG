@@ -198,7 +198,10 @@ def generate_answer(query:str,chat_history=None):
 
 
         
-    prompt = f"""You are a helpful AI assistant. Use the context and conversation history to answer the question.
+    prompt = f"""You are a precise assistant. Answer the user's question DIRECTLY and concisely.
+Start your answer by directly addressing what was asked.
+Do not add general background information unless specifically asked.
+Only use information from the provided context.
 
 CONVERSATION HISTORY:
 {history_text}

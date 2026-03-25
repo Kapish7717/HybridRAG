@@ -13,6 +13,7 @@ import time
 import json
 import asyncio
 import sqlite3
+from evaluation import evaluate_rag,generate_reference_answer
 from text_to_sql import rank_tables,make_sql_prompt,extract_schema,generate_sql_query,sql_response,rag_response
 
 app_start_time = datetime.now()
@@ -84,6 +85,7 @@ class QueryRequest(BaseModel):
     query:str
     doc_id:Optional[str]=None
     session_id:Optional[str]=None
+    ground_truth:Optional[str]=None
 
 class QueryResponse(BaseModel):
     query:str
@@ -203,6 +205,42 @@ def query_documents(request:QueryRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Query processing failed: {str(e)}"
+        )
+
+@app.post('/evaluate')
+def evaluate_query(request: QueryRequest):
+    """
+    Evaluates a RAG query using Ragas metrics: faithfulness, answer_relevancy, 
+    context_precision, and context_recall.
+    """
+    try:
+        # 1. Generate the answer and retrieve contexts
+        # We don't use sessions for evaluation to keep it simple
+        answer, sources, raw_contexts = generate_answer(request.query)
+        gt = request.ground_truth
+        if not gt:
+            gt = generate_reference_answer(request.query,raw_contexts)
+        # 2. Run the evaluation
+        # Ragas requires contexts to be a list of strings
+        eval_metrics = evaluate_rag(
+            query=request.query,
+            answer=answer,
+            contexts=raw_contexts,
+            ground_truth=gt
+        )
+
+        return {
+            "query": request.query,
+            "answer": answer,
+            "metrics": eval_metrics,
+            "sources": sources,
+            "ground_truth":gt
+        }
+    except Exception as e:
+        print(f"❌ Evaluation failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Evaluation failed: {str(e)}"
         )
 
 # Removed get_session_metrics endpoint
