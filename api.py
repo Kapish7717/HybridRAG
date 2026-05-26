@@ -86,6 +86,8 @@ class QueryRequest(BaseModel):
     doc_id:Optional[str]=None
     session_id:Optional[str]=None
     ground_truth:Optional[str]=None
+    answer:Optional[str]=None
+    contexts:Optional[List[str]]=None
 
 class QueryResponse(BaseModel):
     query:str
@@ -214,9 +216,16 @@ def evaluate_query(request: QueryRequest):
     context_precision, and context_recall.
     """
     try:
-        # 1. Generate the answer and retrieve contexts
-        # We don't use sessions for evaluation to keep it simple
-        answer, sources, raw_contexts = generate_answer(request.query)
+        # 1. Use manual input if provided, otherwise generate
+        if request.answer and request.contexts:
+            print("📝 Using manual answer and context for evaluation...")
+            answer = request.answer
+            raw_contexts = request.contexts
+            sources = [] # No source metadata for manual contexts
+        else:
+            print("🔍 Generating RAG answer for evaluation...")
+            answer, sources, raw_contexts = generate_answer(request.query)
+        
         gt = request.ground_truth
         if not gt:
             gt = generate_reference_answer(request.query,raw_contexts)

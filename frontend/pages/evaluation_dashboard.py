@@ -19,7 +19,10 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import requests
 from collections import defaultdict
+
+API_BASE_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 # ─── Try importing your existing ragas module ────────────────────────────────
 # Adjust the import path to match your project structure
@@ -159,7 +162,7 @@ section[data-testid="stSidebar"] {
 """, unsafe_allow_html=True)
 
 # ─── Helper constants ─────────────────────────────────────────────────────────
-METRICS = ["faithfulness", "answer_relevancy"]
+METRICS = ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]
 METRIC_META = {
     "faithfulness": {
         "icon": "🎯",
@@ -172,6 +175,18 @@ METRIC_META = {
         "label": "Answer Relevancy",
         "desc": "Does it answer the question?",
         "full_desc": "Measures how directly and completely the answer addresses the original question. Low relevancy means the answer may be factually correct but off-topic.",
+    },
+    "context_precision": {
+        "icon": "🎯",
+        "label": "Context Precision",
+        "desc": "Are the relevant chunks at the top?",
+        "full_desc": "Measures the signal-to-noise ratio in the retrieved context. Higher precision means the most relevant chunks were found and ranked at the top of the retrieval results.",
+    },
+    "context_recall": {
+        "icon": "📦",
+        "label": "Context Recall",
+        "desc": "Are all required facts present?",
+        "full_desc": "Checks if all the facts from the 'Gold Standard' answer are present in the retrieved chunks. High recall means the system successfully found everything it needed.",
     },
 }
 PLOT_BG   = '#0a0e1a'
@@ -276,7 +291,9 @@ def run_demo_evaluation():
     q, a, ctx = random.choice(DEMO_QA)
     faith = round(random.uniform(0.55, 0.97), 4)
     rel   = round(random.uniform(0.50, 0.95), 4)
-    return q, a, ctx, faith, rel
+    prec  = round(random.uniform(0.80, 1.00), 4)
+    rec   = round(random.uniform(0.85, 1.00), 4)
+    return q, a, ctx, faith, rel, prec, rec
 
 # ─── Plots ────────────────────────────────────────────────────────────────────
 def plot_gauge(value, title, color):
@@ -493,26 +510,32 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     st.divider()
 
-    st.markdown("**📝 Test Query**")
+    st.markdown("**🔍 Primary Input**")
     test_query = st.text_area(
-        "Question",
+        "User Question (Required)",
+        placeholder="Enter the question you want to evaluate...",
         value="What is osteoporosis and how is it diagnosed?",
-        height=80, label_visibility="collapsed",
-    )
-    test_answer = st.text_area(
-        "Answer from RAG",
-        value="Osteoporosis is a bone disease characterized by low bone density. "
-              "It is diagnosed using DXA scan which measures bone mineral density.",
         height=100, label_visibility="collapsed",
-        placeholder="Paste your RAG system's answer here...",
     )
-    st.markdown("**📄 Context Chunks** (one per line)")
-    context_raw = st.text_area(
-        "Contexts",
-        value="Osteoporosis is a disease characterized by low bone mass and structural deterioration.\nDXA scan is the gold standard for measuring bone mineral density. T-score below -2.5 indicates osteoporosis.",
-        height=120, label_visibility="collapsed",
-    )
-    contexts = [c.strip() for c in context_raw.split('\n') if c.strip()]
+    
+    with st.expander("🛠️ Advanced Overrides (Optional)"):
+        st.info("Leave these blank to let the system generate them automatically.")
+        test_answer = st.text_area(
+            "Manual Answer",
+            placeholder="Override the system's generated answer...",
+            height=100,
+        )
+        test_ground_truth = st.text_area(
+            "Manual Ground Truth",
+            placeholder="Provide a specific 'Gold Standard' answer to compare against...",
+            height=100,
+        )
+        context_raw = st.text_area(
+            "Manual Context Chunks (one per line)",
+            placeholder="Override retrieved document fragments...",
+            height=120,
+        )
+        contexts = [c.strip() for c in context_raw.split('\n') if c.strip()]
 
     st.divider()
 
@@ -565,16 +588,18 @@ st.divider()
 # ─── DEMO RUN ─────────────────────────────────────────────────────────────────
 if demo_btn:
     with st.spinner("Running demo evaluation..."):
-        q, a, ctx, faith, rel = run_demo_evaluation()
+        q, a, ctx, faith, rel, prec, rec = run_demo_evaluation()
         status = classify_failure(faith, rel)
         record = {
-            "timestamp":       datetime.datetime.now().strftime("%H:%M:%S"),
-            "question":        q,
-            "answer":          a[:80] + "..." if len(a) > 80 else a,
-            "faithfulness":    faith,
+            "timestamp":        datetime.datetime.now().strftime("%H:%M:%S"),
+            "question":         q,
+            "answer":           a[:80] + "..." if len(a) > 80 else a,
+            "faithfulness":     faith,
             "answer_relevancy": rel,
-            "status":          status,
-            "contexts_count":  len(ctx),
+            "context_precision": prec,
+            "context_recall":    rec,
+            "status":           status,
+            "contexts_count":   len(ctx),
         }
         st.session_state.history.append(record)
         st.session_state.total_queries += 1
@@ -586,10 +611,8 @@ if demo_btn:
 
 # ─── REAL EVALUATION RUN ──────────────────────────────────────────────────────
 if eval_btn:
-    if not test_query.strip() or not test_answer.strip():
-        st.warning("Please enter a question and answer before evaluating.")
-    elif not contexts:
-        st.warning("Please enter at least one context chunk.")
+    if not test_query.strip():
+        st.warning("Please enter a question to evaluate.")
     else:
         prog = st.progress(0, text="Initialising models...")
         stat_box = st.empty()
@@ -602,19 +625,22 @@ if eval_btn:
             eval_done.set()
 
         def run_in_thread():
-            if RAGAS_AVAILABLE:
-                run_ragas_evaluation(
-                    query=test_query,
-                    answer=test_answer,
-                    contexts=contexts,
-                    callback=callback,
-                )
-            else:
-                # Fallback if import failed — simulate
-                time.sleep(2)
-                import random
-                result_holder['faithfulness']    = round(random.uniform(0.5, 0.95), 4)
-                result_holder['answer_relevancy']= round(random.uniform(0.5, 0.95), 4)
+            try:
+                # Call the unified backend evaluation endpoint
+                response = requests.post(f"{API_BASE_URL}/evaluate", json={
+                    "query": test_query,
+                    "answer": test_answer if test_answer.strip() else None,
+                    "contexts": contexts if contexts else None,
+                    "ground_truth": test_ground_truth if test_ground_truth.strip() else None
+                })
+                if response.status_code == 200:
+                    data = response.json()
+                    callback(data.get("metrics", {}))
+                else:
+                    st.error(f"API Error: {response.text}")
+                    eval_done.set()
+            except Exception as e:
+                st.error(f"Failed to reach API: {str(e)}")
                 eval_done.set()
 
         thread = threading.Thread(target=run_in_thread, daemon=True)
@@ -687,12 +713,10 @@ else:
     # ── KPI CARDS ────────────────────────────────────────────────────────────
     sec("📌", "LATEST EVALUATION SCORES")
     k1, k2, k3, k4 = st.columns(4)
-    with k1: kpi_card("🎯", "FAITHFULNESS",     faith_cur, "Answer grounded in context?")
-    with k2: kpi_card("💡", "ANSWER RELEVANCY", rel_cur,   "Does it address the question?")
-    with k3: kpi_card("📈", "AVG FAITHFULNESS", avg_faith, f"Across {len(history)} queries")
-    with k4: kpi_card("📊", "PASS RATE",
-                       pass_rate / 100,
-                       f"{st.session_state.total_pass}/{st.session_state.total_queries} passed")
+    with k1: kpi_card("🎯", "FAITHFULNESS",     latest.get("faithfulness"), "Answer grounded in context?")
+    with k2: kpi_card("💡", "ANSWER RELEVANCY", latest.get("answer_relevancy"), "Does it address the question?")
+    with k3: kpi_card("🎯", "PRECISION",        latest.get("context_precision"), "Correct chunks prioritized?")
+    with k4: kpi_card("📦", "RECALL",           latest.get("context_recall"), "All facts found in PDF?")
 
     st.markdown("")
 

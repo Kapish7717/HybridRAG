@@ -83,6 +83,6 @@ def run_ragas_evaluation(query: str, answer: str, contexts: list[str], callback=
         if callback and metrics_output:
             callback(metrics_output)
             
-        return result
+        return metrics_output
     except Exception as e:
         print(f"\n❌ [Ragas] Evaluation failed: {str(e)}")

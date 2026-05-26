@@ -31,23 +31,23 @@ def evaluate_rag(query: str, answer: str, contexts: list[str], ground_truth: str
         eval_llm = ChatGroq(model_name=RAGAS_LLM_MODEL, groq_api_key=GROQ_API_KEY)
         eval_embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
-        # Prepare data in the format Ragas expects
+        metrics = [faithfulness, answer_relevancy]
+        
+        # 1. Prepare base data
         data = {
             "question": [query],
             "answer": [answer],
             "contexts": [contexts],
         }
-        
-        # Determine available metrics
-        metrics = [faithfulness, answer_relevancy]
-        
-        if ground_truth:
+
+        # 2. Add ground truth if available (manual or generated)
+        if ground_truth and str(ground_truth).strip():
+            print(f"📊 [Ragas] Ground Truth detected. Including Precision & Recall.")
             data["reference"] = [ground_truth]
-            # Also keep ground_truth for older versions
-            data["ground_truth"] = [ground_truth]
+            data["ground_truth"] = [ground_truth] # Compatibility
             metrics.extend([context_precision, context_recall])
         else:
-            print("⚠️ ground_truth not provided. Skipping context_precision and context_recall.")
+            print("⚠️ [Ragas] No ground_truth. Evaluation will be incomplete.")
 
         dataset = Dataset.from_dict(data)
 
@@ -69,19 +69,28 @@ def evaluate_rag(query: str, answer: str, contexts: list[str], ground_truth: str
             except (ValueError, TypeError):
                 return 0.0
 
-        metrics_output = {}
-        if isinstance(result, dict):
-            for m in metrics:
-                metrics_output[m.name] = safe_value(result.get(m.name))
-        else:
-            df = result.to_pandas()
-            for m in metrics:
-                if m.name in df:
-                    metrics_output[m.name] = safe_value(df[m.name].mean())
-                else:
-                    metrics_output[m.name] = 0.0
-                    
+        metrics_output = {
+            "faithfulness": 0.0,
+            "answer_relevancy": 0.0,
+            "context_precision": 0.0,
+            "context_recall": 0.0
+        }
+
+        res_dict = result if isinstance(result, dict) else result.to_pandas().iloc[0].to_dict()
+        
+        mapping = {
+            "faithfulness": "faithfulness",
+            "answer_relevancy": "answer_relevancy",
+            "context_precision": "context_precision",
+            "context_recall": "context_recall"
+        }
+
+        for r_name, target in mapping.items():
+            if r_name in res_dict:
+                metrics_output[target] = safe_value(res_dict[r_name])
+
         return metrics_output
+
 
     except Exception as e:
         print(f"\n❌ [Ragas] Evaluation failed: {str(e)}")
