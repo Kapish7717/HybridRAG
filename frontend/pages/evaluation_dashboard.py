@@ -358,11 +358,14 @@ def plot_history_line(history, metric):
 
 def plot_radar(faith, rel):
     cats = ['Faithfulness', 'Answer\nRelevancy', 'Coverage', 'Precision', 'Recall']
+    # Handle None values safely
+    faith = faith or 0
+    rel = rel or 0
     # Approximate coverage, precision, recall from available metrics
     cov  = (faith + rel) / 2 * 0.95
     prec = faith * 0.97
     rec  = rel   * 0.93
-    vals = [faith or 0, rel or 0, cov, prec, rec]
+    vals = [faith, rel, cov, prec, rec]
     vals_closed = vals + [vals[0]]
     cats_closed = cats + [cats[0]]
     fig = go.Figure(go.Scatterpolar(
@@ -677,8 +680,10 @@ if eval_btn:
         st.session_state.history.append(record)
         st.session_state.total_queries += 1
         if status == 'pass': st.session_state.total_pass += 1
+        f_str = f"{faith:.3f}" if faith is not None else "N/A"
+        r_str = f"{rel:.3f}" if rel is not None else "N/A"
         st.session_state.log.append(
-            f"[{record['timestamp']}] EVAL  F={faith:.3f}  R={rel:.3f}  → {status.upper()}"
+            f"[{record['timestamp']}] EVAL  F={f_str}  R={r_str}  → {status.upper()}"
         )
         st.rerun()
 
