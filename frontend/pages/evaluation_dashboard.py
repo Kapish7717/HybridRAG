@@ -351,8 +351,8 @@ def plot_history_line(history, metric):
     # threshold line
     fig.add_hline(y=0.75, line=dict(color='#2a4a3a', dash='dot', width=1))
     fig = chart_layout(fig, height=220)
-    fig.update_yaxis(range=[0, 1.05])
-    fig.update_xaxis(title=dict(text="Query #",
+    fig.update_yaxes(range=[0, 1.05])
+    fig.update_xaxes(title=dict(text="Query #",
                                 font=dict(color=TEXT_COL, size=10)))
     return fig
 
@@ -454,8 +454,8 @@ def plot_scatter(history):
     fig.add_vline(x=0.75, line=dict(color=GRID_COL, dash='dot', width=1))
     fig.add_hline(y=0.75, line=dict(color=GRID_COL, dash='dot', width=1))
     fig = chart_layout(fig, "Faithfulness vs Answer Relevancy", height=300)
-    fig.update_xaxis(title="Faithfulness",      range=[0, 1.05])
-    fig.update_yaxis(title="Answer Relevancy",  range=[0, 1.05])
+    fig.update_xaxes(title="Faithfulness",      range=[0, 1.05])
+    fig.update_yaxes(title="Answer Relevancy",  range=[0, 1.05])
     fig.update_layout(legend=dict(bgcolor='#0d1220', bordercolor=GRID_COL,
                                   font=dict(color=TEXT_COL, size=10)))
     return fig
