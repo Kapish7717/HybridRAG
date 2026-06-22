@@ -1,6 +1,6 @@
 # Hybrid RAG Document Q&A System
 
-Try it hre : https://rag-frontend-0gwv.onrender.com/
+Try it here : https://rag-frontend-0gwv.onrender.com/
 
 A completely containerized, cloud-ready Hybrid Retrieval-Augmented Generation (RAG) application. This project allows users to seamlessly upload PDF documents and ask context-aware questions about them intelligently.
 
