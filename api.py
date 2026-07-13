@@ -52,6 +52,16 @@ app.add_middleware(
 chat_sessions = {}
 current_db_path: Optional[str] = None  # Tracks the currently active database file path
 
+# Global status tracking for background PDF ingestion
+ingestion_state = {
+    "status": "idle",
+    "filename": None,
+    "error": None,
+    "doc_id": None,
+    "chunks": 0,
+    "total_pages": 0
+}
+
 @app.get('/metrics')
 def get_metrics():
     """System performance metrics"""
@@ -125,59 +135,85 @@ class SQLQueryResponse(BaseModel):
     error: Optional[str] = None
 
 
-@app.post('/ingest')
-def ingest_document(file:UploadFile=File(...),
-    # username: str = Depends(verify_token) 
-    ):
-    # print(f"👤 User {username} is uploading {file.filename}")
-    # if not file.filename.endswith('.pdf'):
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail='ONLY PDFs ARE ACCEPTED!'
-    #     )
-    username="default"
+def run_ingestion_background(temp_file_path: str, filename: str):
+    global ingestion_state
     try:
-        # Create a temporary file instead of saving to uploads folder
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            shutil.copyfileobj(file.file, tmp)
-            temp_file_path = tmp.name
-
         result = ingest_pdf(temp_file_path)
         
         # Refresh the BM25 index now that new documents are in the DB
         refresh_bm25()
         
-        try:
-            os.remove(temp_file_path)
-            print(f"🗑️ Cleaned up temp file: {temp_file_path}")
-        except Exception as e:
-            print(f"⚠️ Could not delete temp file: {e}")
-        
-        chat_sessions.clear()
-        print("Cleared all chat sessions!!")
-        return {
+        ingestion_state.update({
             "status": "success",
             "doc_id": result["doc_id"],
-            "filename": result["filename"],
             "chunks": result["chunks"],
-            "message": f"Successfully processed {result['total_pages']} pages into {result['chunks']} chunks"
-        }
-    except ValueError as e:
-        # Handle PDF processing errors
+            "total_pages": result["total_pages"]
+        })
+        print(f"[SUCCESS] Ingestion successful for {filename}")
+    except Exception as e:
+        print(f"[ERROR] Ingestion failed in background: {str(e)}")
+        ingestion_state.update({
+            "status": "failed",
+            "error": str(e)
+        })
+    finally:
+        try:
+            os.remove(temp_file_path)
+            print(f"[CLEANUP] Cleaned up temp file: {temp_file_path}")
+        except Exception as e:
+            print(f"[WARNING] Could not delete temp file: {e}")
+        chat_sessions.clear()
+        print("Cleared all chat sessions!!")
+
+
+@app.post('/ingest')
+async def ingest_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...)
+):
+    global ingestion_state
+    
+    # Check if a background ingestion is already running
+    if ingestion_state["status"] == "processing":
         raise HTTPException(
             status_code=400,
-            detail=f"PDF processing failed: {str(e)}"
+            detail="Another PDF ingestion is already in progress. Please wait."
         )
-    
+        
+    try:
+        # Create a temporary file instead of saving to uploads folder
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            temp_file_path = tmp.name
     except Exception as e:
-        # Handle unexpected errors
-        print(f"❌ Ingestion failed: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Server error: {str(e)}"
+            detail=f"Failed to create temp file: {str(e)}"
         )
-        
-        
+
+    # Initialize status tracking
+    ingestion_state = {
+        "status": "processing",
+        "filename": file.filename,
+        "error": None,
+        "doc_id": None,
+        "chunks": 0,
+        "total_pages": 0
+    }
+    
+    # Schedule the background task
+    background_tasks.add_task(run_ingestion_background, temp_file_path, file.filename)
+    
+    return {
+        "status": "processing",
+        "message": "Ingestion started in the background"
+    }
+
+
+@app.get('/ingest/status')
+def get_ingest_status():
+    global ingestion_state
+    return ingestion_state
 
 @app.post('/query')
 def query_documents(request:QueryRequest):

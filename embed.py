@@ -6,12 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-EMBED_MODEL = os.getenv("EMBED_MODEL", "models/gemini-embedding-001")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 class RateLimitedGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
     def embed_documents(self, texts: list[str], **kwargs) -> list[list[float]]:
-        # Enforce a safe chunk/batch size for the Gemini Embeddings API (e.g., 8 texts per API request)
-        batch_size = kwargs.pop('batch_size', 8)
+        # Enforce a safe chunk/batch size for the Gemini Embeddings API (e.g., 32 texts per API request)
+        batch_size = kwargs.pop('batch_size', 32)
         
         results = []
         for i in range(0, len(texts), batch_size):
@@ -40,7 +40,7 @@ class RateLimitedGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
                 
             # If there are more batches, sleep slightly to prevent exceeding the Requests Per Minute (RPM) limit
             if i + batch_size < len(texts):
-                time.sleep(1.5)
+                time.sleep(2.0)
                 
         return results
 
@@ -59,4 +59,10 @@ class RateLimitedGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
                 time.sleep(sleep_time)
 
 def get_embeddings():
-    return RateLimitedGoogleEmbeddings(model=EMBED_MODEL)
+    if "gemini" in EMBED_MODEL.lower():
+        print(f"🤖 Using Gemini Embeddings model: {EMBED_MODEL}")
+        return RateLimitedGoogleEmbeddings(model=EMBED_MODEL)
+    else:
+        print(f"🤗 Using local HuggingFace Embeddings model: {EMBED_MODEL}")
+        from langchain_huggingface import HuggingFaceEmbeddings
+        return HuggingFaceEmbeddings(model_name=EMBED_MODEL)

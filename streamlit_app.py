@@ -31,20 +31,41 @@ with st.sidebar:
         uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
         if st.button("Upload PDF"):
             if uploaded_file is not None:
-                with st.spinner("Processing document..."):
-                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
-                    try:
-                        response = requests.post(f"{API_BASE_URL}/ingest", files=files)
-                        if response.status_code == 200:
-                            st.success(f"Successfully processed {uploaded_file.name}")
-                            st.session_state.document_uploaded = True
-                            st.session_state.messages = [] # clear chat
-                            st.session_state.session_id = str(uuid.uuid4())
-                            st.session_state.messages.append({"role": "assistant", "content": f"Document '{uploaded_file.name}' is ready. Ask me anything!"})
-                        else:
-                            st.error(f"Failed to process: {response.text}")
-                    except Exception as e:
-                        st.error(f"Error connecting to backend: {e}")
+                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
+                try:
+                    response = requests.post(f"{API_BASE_URL}/ingest", files=files)
+                    if response.status_code == 200:
+                        # Ingestion successfully queued, now poll for completion
+                        with st.spinner("Processing document in background (this may take a few minutes)..."):
+                            import time
+                            while True:
+                                status_res = requests.get(f"{API_BASE_URL}/ingest/status")
+                                if status_res.status_code == 200:
+                                    status_data = status_res.json()
+                                    status = status_data.get("status")
+                                    if status == "success":
+                                        st.success(f"Successfully processed {uploaded_file.name} ({status_data.get('chunks')} chunks)")
+                                        st.session_state.document_uploaded = True
+                                        st.session_state.messages = [] # clear chat
+                                        st.session_state.session_id = str(uuid.uuid4())
+                                        st.session_state.messages.append({"role": "assistant", "content": f"Document '{uploaded_file.name}' is ready. Ask me anything!"})
+                                        st.rerun()  # Force Streamlit to rerun and unlock the chat box immediately
+                                        break
+                                    elif status == "failed":
+                                        st.error(f"Failed to process: {status_data.get('error')}")
+                                        break
+                                    elif status == "processing":
+                                        time.sleep(2)
+                                    else:
+                                        st.error(f"Unknown ingestion status: {status}")
+                                        break
+                                else:
+                                    st.error(f"Error checking status: {status_res.text}")
+                                    break
+                    else:
+                        st.error(f"Failed to start processing: {response.text}")
+                except Exception as e:
+                    st.error(f"Error connecting to backend: {e}")
             else:
                 st.warning("Please select a file first.")
                 
