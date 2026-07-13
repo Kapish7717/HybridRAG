@@ -63,6 +63,10 @@ def get_embeddings():
         print(f"🤖 Using Gemini Embeddings model: {EMBED_MODEL}")
         return RateLimitedGoogleEmbeddings(model=EMBED_MODEL)
     else:
-        print(f"🤗 Using local HuggingFace Embeddings model: {EMBED_MODEL}")
-        from langchain_huggingface import HuggingFaceEmbeddings
-        return HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+        print(f"☁️ Using Hosted Serverless Hugging Face Endpoint: {EMBED_MODEL}")
+        from langchain_huggingface.embeddings import HuggingFaceEndpointEmbeddings
+        return HuggingFaceEndpointEmbeddings(
+            model=EMBED_MODEL,
+            task="feature-extraction",
+            huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN")
+        )
