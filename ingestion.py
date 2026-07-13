@@ -70,16 +70,13 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
         print(f"👉 Adding new documents: {len(new_chunks)}")
         new_chunk_ids = [chunk.metadata["id"] for chunk in new_chunks]
         
-        # Batch insertions and sleep to avoid Gemini 100 req/min rate limit
+        # Batch insertions
         batch_size = 50
         for i in range(0, len(new_chunks), batch_size):
             batch = new_chunks[i:i + batch_size]
             batch_ids = new_chunk_ids[i:i + batch_size]
             print(f"Inserting batch {i//batch_size + 1}/{(len(new_chunks) + batch_size - 1)//batch_size}...")
             db.add_documents(batch, ids=batch_ids)
-            if i + batch_size < len(new_chunks):
-                print("Sleeping for 10 seconds to respect API rate limits...")
-                time.sleep(10)
         
         print("✅ Successfully added to database")
     else:
