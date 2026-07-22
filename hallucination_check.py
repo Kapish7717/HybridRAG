@@ -13,7 +13,6 @@ def load_hallucination_model():
     if _tokenizer is None:
         _tokenizer = AutoTokenizer.from_pretrained(
             HALL_MODEL_NAME,
-            # trust_remote_code=True,
             # use_fast=False  # IMPORTANT
         )
 
