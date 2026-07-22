@@ -4,7 +4,8 @@ import uuid
 
 import os
 
-API_BASE_URL = os.environ.get("API_URL", "http://localhost:8000")
+API_BASE_URL = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
+DEFAULT_API_URL = "http://localhost:8000"
 
 st.set_page_config(page_title="RAG Chat Assistant", page_icon="📚")
 
@@ -60,10 +61,13 @@ with st.sidebar:
                                         st.error(f"Unknown ingestion status: {status}")
                                         break
                                 else:
-                                    st.error(f"Error checking status: {status_res.text}")
+                                    st.error(f"Error checking status: {status_res.status_code} - {status_res.text}")
                                     break
                     else:
-                        st.error(f"Failed to start processing: {response.text}")
+                        if response.status_code == 429:
+                            st.error("Failed to start processing: Too Many Requests. This may be caused by Render rate limiting or an external API provider overload. Check your backend logs and verify API_URL is set correctly.")
+                        else:
+                            st.error(f"Failed to start processing ({response.status_code}): {response.text}")
                 except Exception as e:
                     st.error(f"Error connecting to backend: {e}")
             else:
