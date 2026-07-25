@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks, Form
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -89,6 +90,23 @@ def health_check():
         "status":"healthy",
         "message":"API is running"
     }
+
+
+@app.get('/ready')
+def readiness_check():
+    """Readiness endpoint: ensures heavy models are loaded before declaring ready."""
+    try:
+        # Import here to avoid circular imports at module import time
+        from rag import get_reranker
+        from hallucination_check import load_hallucination_model
+
+        # Trigger model initialization (should be fast if models were pre-downloaded at build time)
+        get_reranker()
+        load_hallucination_model()
+
+        return JSONResponse(status_code=200, content={"ready": True})
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ready": False, "error": str(e)})
 
 
 class QueryRequest(BaseModel):
