@@ -4,11 +4,13 @@ python-multipart==0.0.22
 pydantic==2.12.5
 langchain==1.2.7
 langchain-community==0.4.1
-langchain-chroma==1.1.0
+langchain-pinecone==0.2.13
+pinecone==7.3.0
 langchain-groq==1.1.2
 langchain-experimental==0.4.1
 langchain-core==1.2.15
 pypdf==6.6.2
+# Only needed to run migrate_chroma_to_pinecone.py (one-off migration)
 chromadb==1.4.1
 sentence-transformers==5.2.2
 rank-bm25==0.2.2

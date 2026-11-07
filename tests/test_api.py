@@ -29,6 +29,33 @@ def test_health_check(client):
     assert response.status_code == 200
     assert response.json() == {"status": "healthy", "message": "API is running"}
 
+def test_health_endpoint(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy", "message": "API is running"}
+
+def test_probe_path_log_filter():
+    import logging
+
+    log_filter = api.ProbePathLogFilter()
+
+    def record(path):
+        return logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg='%s - "%s %s HTTP/%s" %d',
+            args=("127.0.0.1:50069", "GET", path, "1.1", 404),
+            exc_info=None,
+        )
+
+    # Probe path is dropped; real traffic is kept.
+    assert log_filter.filter(record("/v1/models")) is False
+    assert log_filter.filter(record("/health")) is True
+    assert log_filter.filter(record("/query")) is True
+
+
 def test_metrics(client):
     response = client.get("/metrics")
     assert response.status_code == 200

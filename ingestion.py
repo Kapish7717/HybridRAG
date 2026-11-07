@@ -1,16 +1,13 @@
 from langchain_community.document_loaders import PyPDFLoader 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain_chroma import Chroma
-from embed import get_embeddings
+from vector_store import add_documents, clear_vector_store, get_all_ids
 import os
-import shutil  # ✅ ADD THIS
 from datetime import datetime
 import uuid
 import time
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")  
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
 LLM_MODEL = os.getenv("LLM_MODEL", "phi3:mini")
 TOP_K = int(os.getenv("TOP_K", "4"))
 
@@ -23,26 +20,17 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
     filename = os.path.basename(pdf_path)
     
     print(f"📄 Processing: {filename} (doc_id: {doc_id})")
-    # Instead of deleting the folder (which fails in Docker if it's a mounted volume),
-    # we initialize the DB and delete all records via the API if we want to clear it.
-    db = Chroma(
-        persist_directory=CHROMA_PATH,
-        embedding_function=get_embeddings()
-    )
-    
+
+    # The app keeps a single active document, so clear the namespace first.
     try:
-        existing_items = db.get(include=[])
-        existing_ids = existing_items.get("ids", [])
-        if existing_ids:
-            print(f"🗑️ Clearing {len(existing_ids)} old documents from database...")
-            # We must pass the list of IDs directly, deleting empty lists fails in some Chroma versions.
-            db.delete(ids=existing_ids)
-            print("✅ Database cleared.")
+        cleared = clear_vector_store()
+        if cleared:
+            print(f"🗑️ Clearing {cleared} old vectors from Pinecone...")
+        print("✅ Vector index cleared.")
     except Exception as e:
-        print(f"⚠️ Could not clear old database records: {e}")
-        print("Proceeding with existing database (chunks will be added/updated as needed).")
-    
-    # Rest of your code stays the same
+        print(f"⚠️ Could not clear Pinecone index: {e}")
+        print("Proceeding with existing index (chunks will be added/updated as needed).")
+
     document_loader = PyPDFLoader(pdf_path)
     documents = document_loader.load()
     text_splitter = RecursiveCharacterTextSplitter(
@@ -57,8 +45,11 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
 
     chunks_with_ids = calculate_chunk_ids(chunks)
 
-    existing_items = db.get(include=[])
-    existing_ids = set(existing_items["ids"])
+    try:
+        existing_ids = set(get_all_ids())
+    except Exception as e:
+        print(f"⚠️ Could not fetch existing vector ids: {e}")
+        existing_ids = set()
     print(f"Number of existing documents in DB: {len(existing_ids)}")
 
     new_chunks = []
@@ -76,8 +67,13 @@ def ingest_pdf(pdf_path:str,username: str = "default"):
             batch = new_chunks[i:i + batch_size]
             batch_ids = new_chunk_ids[i:i + batch_size]
             print(f"Inserting batch {i//batch_size + 1}/{(len(new_chunks) + batch_size - 1)//batch_size}...")
-            db.add_documents(batch, ids=batch_ids)
-        
+            add_documents(batch, ids=batch_ids, batch_size=batch_size)
+
+            # Be gentle with hosted embedding APIs (e.g. Gemini free tier).
+            if i + batch_size < len(new_chunks):
+                print("Sleeping for 10 seconds to respect embedding API rate limits...")
+                time.sleep(10)
+
         print("✅ Successfully added to database")
     else:
         print("✅ No new documents to add")

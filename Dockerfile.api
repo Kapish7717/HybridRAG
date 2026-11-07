@@ -28,6 +28,7 @@ PY
 COPY api.py .
 COPY ingestion.py .
 COPY rag.py .
+COPY vector_store.py .
 COPY embed.py .
 COPY hallucination_check.py .
 COPY text_to_sql.py .

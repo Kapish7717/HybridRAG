@@ -30,7 +30,7 @@ This document explains the step-by-step workflow of the newly integrated **Text-
 ## 4. SQL Generation
 - **Action:** A prompt is constructed containing the user's question and the Top 3 table schemas.
 - **Backend Process:**
-  - The system utilizes **Groq API** (powered by `llama-3.3-70b-versatile`) to generate a highly precise SQLite query.
+  - The system utilizes **Groq API** (powered by `openai/gpt-oss-120b`) to generate a highly precise SQLite query.
   - The prompt explicitly forces the LLM to output *only* raw SQL code with no conversational filler, ensuring it can be executed mechanically.
 
 ## 5. Execution & Data Retrieval

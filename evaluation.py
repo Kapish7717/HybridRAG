@@ -12,10 +12,10 @@ from ragas.metrics.collections import (
 from datasets import Dataset
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
-RAGAS_LLM_MODEL = os.getenv("RAGAS_LLM_MODEL", "llama-3.3-70b-versatile")
+RAGAS_LLM_MODEL = os.getenv("RAGAS_LLM_MODEL", "openai/gpt-oss-120b")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 def evaluate_rag(query: str, answer: str, contexts: list[str], ground_truth: str = None):

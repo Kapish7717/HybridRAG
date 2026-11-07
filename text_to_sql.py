@@ -5,7 +5,7 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
 import sqlite3
-load_dotenv()
+load_dotenv(override=True)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 JINA_API_KEY = os.getenv("JINA_API_KEY", "")
@@ -16,7 +16,7 @@ def chat_model():
     global llm
     if not llm:
         llm = ChatGroq(
-            model_name="llama-3.3-70b-versatile",
+            model_name=os.getenv("RAGAS_LLM_MODEL", "openai/gpt-oss-120b"),
             api_key=GROQ_API_KEY,
             max_tokens=1000,
         )

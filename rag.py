@@ -1,18 +1,17 @@
-from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
 from langchain_core.documents import Document
 import os
-from embed import get_embeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.messages import HumanMessage, AIMessage 
 from sentence_transformers import CrossEncoder,SentenceTransformer,util
 from hallucination_check import check_hallucination
+from vector_store import get_vector_store, get_all_documents
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True so values in .env win over stale shell/OS env vars
+load_dotenv(override=True)
 
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
 TOP_K = int(os.getenv("TOP_K", "5"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 CROSS_ENCODER = os.getenv("CROSS_ENCODER","cross-encoder/ms-marco-TinyBERT-L-2-v2")
@@ -26,12 +25,9 @@ def get_vectordb():
     global _vector_db
     if _vector_db is None:
         try:
-            _vector_db = Chroma(
-                persist_directory=CHROMA_PATH,
-                embedding_function=get_embeddings()
-            )
+            _vector_db = get_vector_store()
         except Exception as e:
-            print(f"⚠️ Failed to load Chroma DB: {e}")
+            print(f"⚠️ Failed to load Pinecone index: {e}")
             _vector_db = None
     return _vector_db
 
@@ -42,28 +38,17 @@ def get_bm25_retriever():
     return _bm25_retriever
 
 def refresh_bm25():
-    """Refreshes the global BM25 retriever index from Chroma DB"""
+    """Refreshes the global BM25 retriever index from Pinecone"""
     global _bm25_retriever
     print("🔄 Refreshing BM25 index in memory...")
     try:
-        db = get_vectordb()
-        if not db:
+        if not get_vectordb():
             return None
-        
-        all_data = db.get()
-        if not all_data or not all_data.get("documents"):
-            print("⚠️ Chroma DB is empty, BM25 index cleared.")
-            _bm25_retriever = None
-            return None
-            
-        all_docs = [
-             Document(page_content=text,metadata=meta)
-             for text, meta in zip(all_data["documents"],all_data["metadatas"])
-             if text and text.strip()
-        ]
-        
+
+        all_docs = get_all_documents()
+
         if not all_docs:
-            print("⚠️ Chroma DB has no valid text documents.")
+            print("⚠️ Pinecone index is empty, BM25 index cleared.")
             _bm25_retriever = None
             return None
             
@@ -85,7 +70,7 @@ def get_reranker():
 def retrieve_context(query: str,use_hybrid=True):
     print("🔥 File loaded")
 
-    """Retrieve top-k relevant chunks from Chroma"""
+    """Retrieve top-k relevant chunks from Pinecone"""
     try:
         db = get_vectordb()
         if not db:
@@ -260,14 +245,12 @@ ANSWER:
     for doc,score in sources_raw:
         chunk_id = doc.metadata.get("id", "unknown")
         
-        # Parse chunk_id: "uploads/doc.pdf:5:2" -> page 5
-        if ":" in chunk_id:
-            parts = chunk_id.split(":")
-            if len(parts) >= 2:
-                page_num = parts[1]
-                source_info = f"Page {page_num}"
-            else:
-                source_info = chunk_id
+        # Parse chunk_id: "uploads/doc.pdf:5:2" -> page 5.
+        # Use the second-to-last segment so Windows paths like
+        # "C:\Temp\doc.pdf:5:2" resolve to the page instead of the path.
+        parts = chunk_id.split(":")
+        if len(parts) >= 3:
+            source_info = f"Page {parts[-2]}"
         else:
             source_info = chunk_id
         

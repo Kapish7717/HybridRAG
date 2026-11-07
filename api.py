@@ -14,8 +14,37 @@ import time
 import json
 import asyncio
 import sqlite3
+import logging
 from evaluation import evaluate_rag,generate_reference_answer
 from text_to_sql import rank_tables,make_sql_prompt,extract_schema,generate_sql_query,sql_response,rag_response
+
+# Paths that scanners/OpenAI-compatible clients probe even though this API does
+# not implement them. They still return 404; we just keep them out of the
+# uvicorn access log so real traffic stays readable. Override with a
+# comma-separated SUPPRESS_ACCESS_LOG_PATHS env var.
+_PROBE_PATHS = tuple(
+    path.strip()
+    for path in os.getenv("SUPPRESS_ACCESS_LOG_PATHS", "/v1/models").split(",")
+    if path.strip()
+)
+
+
+class ProbePathLogFilter(logging.Filter):
+    """Drop uvicorn access-log records for known probe paths."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not _PROBE_PATHS:
+            return True
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        return not any(path in message for path in _PROBE_PATHS)
+
+
+_access_logger = logging.getLogger("uvicorn.access")
+if not any(isinstance(f, ProbePathLogFilter) for f in _access_logger.filters):
+    _access_logger.addFilter(ProbePathLogFilter())
 
 app_start_time = datetime.now()
 total_queries = 0
@@ -26,7 +55,6 @@ total_errors = 0
 app = FastAPI()
 
 UPLOAD_DIR = "uploads"
-CHROMA_PATH = "./chroma"
 
 
 app.add_middleware(
@@ -43,7 +71,6 @@ app.add_middleware(
 #     print("🚀 Starting up RAG system...")
 
 #     os.makedirs(UPLOAD_DIR, exist_ok=True)
-#     os.makedirs(CHROMA_PATH, exist_ok=True)
 
 #     print("📦 Loading vector database...")
 #     get_vectordb()
@@ -85,6 +112,8 @@ def get_metrics():
 
 @app.head('/')
 @app.get('/')
+@app.head('/health')
+@app.get('/health')
 def health_check():
     return{
         "status":"healthy",
