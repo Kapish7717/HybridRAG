@@ -1,6 +1,7 @@
 from langchain_groq import ChatGroq
 from langchain_core.documents import Document
 import os
+import time
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.messages import HumanMessage, AIMessage 
 from sentence_transformers import CrossEncoder,SentenceTransformer,util
@@ -218,10 +219,30 @@ ANSWER:
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY is not set in environment or .env file!")
         
-    model = ChatGroq(model_name=LLM_MODEL, groq_api_key=GROQ_API_KEY, temperature=0.1)
-    
-    # Langchain Chat Models need a slightly different stream processing for Document/Role metadata compared to raw LLMs occasionally
-    response = model.invoke(prompt)
+    model_kwargs = dict(
+        model_name=LLM_MODEL,
+        groq_api_key=GROQ_API_KEY,
+        temperature=0.1,
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "1024")),
+        request_timeout=float(os.getenv("LLM_TIMEOUT", "60")),
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")),
+    )
+    # Reasoning models (e.g. openai/gpt-oss-*) accept reasoning_effort; most
+    # other Groq models reject it, so only send it when relevant.
+    if "gpt-oss" in LLM_MODEL.lower() or os.getenv("LLM_REASONING_EFFORT"):
+        model_kwargs["reasoning_effort"] = os.getenv("LLM_REASONING_EFFORT", "low")
+
+    model = ChatGroq(**model_kwargs)
+
+    print(f"🧠 Calling Groq model {LLM_MODEL}...")
+    started = time.time()
+    try:
+        response = model.invoke(prompt)
+    except Exception as e:
+        print(f"❌ Groq call failed after {time.time() - started:.1f}s: {e}")
+        raise
+    print(f"✅ Groq responded in {time.time() - started:.1f}s")
+
     response_text = response.content if hasattr(response, 'content') else str(response)
             
     # Safely unpack results which might be Document objects directly or tuples of (Document, score)

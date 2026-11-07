@@ -19,6 +19,8 @@ def chat_model():
             model_name=os.getenv("RAGAS_LLM_MODEL", "openai/gpt-oss-120b"),
             api_key=GROQ_API_KEY,
             max_tokens=1000,
+            request_timeout=float(os.getenv("LLM_TIMEOUT", "60")),
+            max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")),
         )
     return llm
 

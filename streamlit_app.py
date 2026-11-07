@@ -128,7 +128,7 @@ if prompt := st.chat_input(placeholder_text, disabled=not is_ready):
                     response = requests.post(f"{API_BASE_URL}/query", json={
                         "query": prompt,
                         "session_id": st.session_state.session_id
-                    })
+                    }, timeout=180)
                     
                     if response.status_code == 200:
                         data = response.json()
